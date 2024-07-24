@@ -97,7 +97,12 @@ Zotero.Attachments = new function () {
 				else if (libraryID) {
 					attachmentItem.libraryID = libraryID;
 				}
-				attachmentItem.setField('title', title != undefined ? title : newName);
+				// If we have an explicit title, set it now
+				// Otherwise do it below once we've set the other attachment properties
+				// and can generate a title via setAutoAttachmentTitle()
+				if (title != undefined) {
+					attachmentItem.setField('title', title);
+				}
 				attachmentItem.parentID = parentItemID;
 				attachmentItem.attachmentLinkMode = this.LINK_MODE_IMPORTED_FILE;
 				if (collections) {
@@ -130,6 +135,9 @@ Zotero.Attachments = new function () {
 					attachmentItem.attachmentCharset = charset;
 				}
 				attachmentItem.attachmentPath = newFile.path;
+				if (title == undefined) {
+					attachmentItem.setAutoAttachmentTitle();
+				}
 				await attachmentItem.save(saveOptions);
 			}.bind(this));
 			try {
@@ -187,7 +195,7 @@ Zotero.Attachments = new function () {
 		
 		var item = yield _addToDB({
 			file,
-			title: title != undefined ? title : file.leafName,
+			title,
 			linkMode: this.LINK_MODE_LINKED_FILE,
 			contentType,
 			charset,
@@ -1730,7 +1738,7 @@ Zotero.Attachments = new function () {
 		try {
 			tmpDir = (await this.createTemporaryStorageDirectory()).path;
 			tmpFile = OS.Path.join(tmpDir, fileBaseName + '.pdf');
-			let { url, props } = await this.downloadFirstAvailableFile(
+			let { title, url, props } = await this.downloadFirstAvailableFile(
 				urlResolvers,
 				tmpFile,
 				{
@@ -1746,7 +1754,7 @@ Zotero.Attachments = new function () {
 					directory: tmpDir,
 					libraryID: item.libraryID,
 					filename: PathUtils.filename(tmpFile),
-					title: _getPDFTitleFromVersion(props.articleVersion),
+					title: title || _getPDFTitleFromVersion(props.articleVersion),
 					url,
 					contentType: 'application/pdf',
 					parentItemID: item.id
@@ -1807,8 +1815,8 @@ Zotero.Attachments = new function () {
 	 * @param {Function} [options.onAfterRequest] - Function that runs after a request
 	 * @param {Function} [options.onRequestError] - Function that runs when a request fails.
 	 *     Return true to retry request and false to skip.
-	 * @return {Object|false} - Object with successful 'url' and 'props' from the associated urlResolver,
-	 *     or false if no file could be downloaded
+	 * @return {Object|false} - Object with successful 'title' (when available from translator), 'url', and 'props'
+	 *    from the associated urlResolver, or false if no file could be downloaded
 	 */
 	this.downloadFirstAvailableFile = async function (urlResolvers, path, options) {
 		const maxURLs = 6;
@@ -1883,7 +1891,6 @@ Zotero.Attachments = new function () {
 			
 			let url = urlResolver.url;
 			let pageURL = urlResolver.pageURL;
-			let fromPage = false;
 			
 			// Force URLs to HTTPS. If a request fails because of that, too bad.
 			if (!Zotero.test) {
@@ -1938,6 +1945,7 @@ Zotero.Attachments = new function () {
 			// If URL wasn't available or failed, try to get a URL from a page
 			if (pageURL) {
 				url = null;
+				let title = null;
 				let responseURL;
 				try {
 					Zotero.debug(`Looking for PDF on ${pageURL}`);
@@ -2073,7 +2081,7 @@ Zotero.Attachments = new function () {
 					}
 					// Otherwise translate the Document we parsed above
 					else if (doc) {
-						url = await Zotero.Utilities.Internal.getPDFFromDocument(doc);
+						({ title, url } = await Zotero.Utilities.Internal.getPDFFromDocument(doc));
 					}
 				}
 				catch (e) {
@@ -2100,7 +2108,7 @@ Zotero.Attachments = new function () {
 						await beforeRequest(url);
 						await this.downloadFile(url, path, downloadOptions);
 						afterRequest(url);
-						return { url, props: urlResolver };
+						return { title, url, props: urlResolver };
 					}
 					catch (e) {
 						Zotero.debug(`Error downloading ${url}: ${e}\n\n${e.stack}`);
@@ -2144,6 +2152,9 @@ Zotero.Attachments = new function () {
 			formatString = Zotero.Prefs.get('attachmentRenameTemplate');
 		}
 
+		let chunks = [];
+		let protectedLiterals = new Set();
+
 		formatString = formatString.trim();
 
 		const getSlicedCreatorsOfType = (creatorType, slice) => {
@@ -2182,18 +2193,45 @@ Zotero.Attachments = new function () {
 			if (value === '' || value === null || typeof value === 'undefined') {
 				return '';
 			}
+
+			if (prefix === '\\' || prefix === '/') {
+				prefix = '';
+			}
+
+			if (suffix === '\\' || suffix === '/') {
+				suffix = '';
+			}
+
+			if (protectedLiterals.size > 0) {
+				// escape protected literals in the format string with \
+				value = value.replace(
+					new RegExp(`(${Array.from(protectedLiterals.keys()).join('|')})`, 'g'),
+					'\\$1//'
+				);
+			}
+
 			if (truncate) {
 				value = value.substr(0, truncate);
 			}
 
 			value = value.trim();
+			let rawValue = value;
 
-			if (prefix) {
+			let affixed = false;
+
+			if (prefix && !value.startsWith(prefix)) {
 				value = prefix + value;
+				affixed = true;
 			}
-			if (suffix) {
+			if (suffix && !value.endsWith(suffix)) {
 				value += suffix;
+				affixed = true;
 			}
+
+			if (affixed) {
+				chunks.push({ value, rawValue, suffix, prefix });
+			}
+
 			switch (textCase) {
 				case 'upper':
 					value = value.toUpperCase();
@@ -2289,10 +2327,44 @@ Zotero.Attachments = new function () {
 
 		const vars = { ...fields, ...creatorFields, firstCreator, itemType, year };
 
-		formatString = Zotero.Utilities.Internal.generateHTMLFromTemplate(formatString, vars);
-		formatString = Zotero.Utilities.cleanTags(formatString);
-		formatString = Zotero.File.getValidFileName(formatString);
-		return formatString;
+
+		// Final name is generated twice. In the first pass we collect all affixed values and determine protected literals.
+		// This is done in order to remove repeated suffixes, except if these appear in the value or the format string itself.
+		// See "should suppress suffixes where they would create a repeat character" test for edge cases.
+		let formatted = Zotero.Utilities.Internal.generateHTMLFromTemplate(formatString, vars);
+		
+		let replacePairs = new Map();
+		for (let chunk of chunks) {
+			if (chunk.suffix && formatted.includes(`${chunk.rawValue}${chunk.suffix}${chunk.suffix}`)) {
+				protectedLiterals.add(`${chunk.rawValue}${chunk.suffix}${chunk.suffix}`);
+				replacePairs.set(`${chunk.rawValue}${chunk.suffix}${chunk.suffix}`, `${chunk.rawValue}${chunk.suffix}`);
+			}
+			if (chunk.prefix && formatted.includes(`${chunk.prefix}${chunk.prefix}${chunk.rawValue}`)) {
+				protectedLiterals.add(`${chunk.prefix}${chunk.prefix}${chunk.rawValue}`);
+				replacePairs.set(`${chunk.prefix}${chunk.prefix}${chunk.rawValue}`, `${chunk.prefix}${chunk.rawValue}`);
+			}
+		}
+
+		// Use "/" and "\" as escape characters for protected literals. We need two different escape chars for edge cases.
+		// Both escape chars are invalid in file names and thus removed from the final string by `getValidFileName`
+		if (protectedLiterals.size > 0) {
+			formatString = formatString.replace(
+				new RegExp(`(${Array.from(protectedLiterals.keys()).join('|')})`, 'g'),
+				'\\$1//'
+			);
+		}
+
+		formatted = Zotero.Utilities.Internal.generateHTMLFromTemplate(formatString, vars);
+		if (replacePairs.size > 0) {
+			formatted = formatted.replace(
+				new RegExp(`(${Array.from(replacePairs.keys()).map(replace => `(?<!\\\\)${replace}(?!//)`).join('|')})`, 'g'),
+				match => replacePairs.get(match)
+			);
+		}
+		
+		formatted = Zotero.Utilities.cleanTags(formatted);
+		formatted = Zotero.File.getValidFileName(formatted);
+		return formatted;
 	};
 	
 	
@@ -2873,7 +2945,7 @@ Zotero.Attachments = new function () {
 	 * @param {Object} options
 	 * @param {nsIFile|String} [file]
 	 * @param {String} [url]
-	 * @param {String} title
+	 * @param {String} [title]
 	 * @param {Number} linkMode
 	 * @param {String} contentType
 	 * @param {String} [charset]
@@ -2904,7 +2976,6 @@ Zotero.Attachments = new function () {
 				}
 				attachmentItem.libraryID = parentLibraryID;
 			}
-			attachmentItem.setField('title', title);
 			if (linkMode == self.LINK_MODE_IMPORTED_URL || linkMode == self.LINK_MODE_LINKED_URL) {
 				attachmentItem.setField('url', url);
 				attachmentItem.setField('accessDate', "CURRENT_TIMESTAMP");
@@ -2921,6 +2992,14 @@ Zotero.Attachments = new function () {
 			if (collections) {
 				attachmentItem.setCollections(collections);
 			}
+
+			if (title == undefined) {
+				attachmentItem.setAutoAttachmentTitle();
+			}
+			else {
+				attachmentItem.setField('title', title);
+			}
+
 			await attachmentItem.save(saveOptions);
 			
 			return attachmentItem;

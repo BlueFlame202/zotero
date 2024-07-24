@@ -25,10 +25,7 @@
 
 'use strict';
 
-var { Zotero } = ChromeUtils.importESModule("chrome://zotero/content/zotero.mjs");
-
-Services.scriptloader.loadSubScript("resource://zotero/require.js", this);
-
+Services.scriptloader.loadSubScript("chrome://zotero/content/include.js", this);
 Services.scriptloader.loadSubScript("chrome://global/content/customElements.js", this);
 Services.scriptloader.loadSubScript("chrome://zotero/content/elements/base.js", this);
 Services.scriptloader.loadSubScript('chrome://zotero/content/elements/itemPaneSection.js', this);
@@ -73,6 +70,7 @@ Services.scriptloader.loadSubScript('chrome://zotero/content/elements/itemPaneSe
 		['note-row', 'chrome://zotero/content/elements/noteRow.js'],
 		['notes-context', 'chrome://zotero/content/elements/notesContext.js'],
 		['libraries-collections-box', 'chrome://zotero/content/elements/librariesCollectionsBox.js'],
+		['autocomplete-textarea', 'chrome://zotero/content/elements/autocompleteTextArea.js'],
 	]) {
 		customElements.setElementCreationCallback(tag, () => {
 			Services.scriptloader.loadSubScript(script, window);
@@ -192,10 +190,16 @@ Services.scriptloader.loadSubScript('chrome://zotero/content/elements/itemPaneSe
 				element: "dialog",
 				// The `attachShadow` are cleared in <dialog>, we need to monkey-patch after `connectedCallback`.
 				patchedFunction: "connectedCallback",
-				filename: "wizard-dialog"
 			}
 		],
-		mac: [],
+		mac: [
+			"wizard",
+			{
+				element: "dialog",
+				// The `attachShadow` are cleared in <dialog>, we need to monkey-patch after `connectedCallback`.
+				patchedFunction: "connectedCallback",
+			}
+		],
 		linux: [],
 	};
 	for (let [key, configs] of Object.entries(InjectCSSConfig)) {

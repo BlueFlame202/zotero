@@ -51,6 +51,7 @@
 			this._draggedCreator = false;
 			this._selectField = null;
 			this._selectFieldSelection = null;
+			this._addCreatorRow = false;
 		}
 
 		get content() {
@@ -150,12 +151,17 @@
 				this._id('creator-transform-switch').setAttribute("label", creatorNameBox.getAttribute("switch-mode-label"));
 			});
 
-			// Ensure no button is forced to stay visible once the menu is cloed
-			this.querySelector('#zotero-creator-transform-menu').addEventListener('popuphidden', (_) => {
-				let row = document.popupNode.closest('.meta-row');
-				for (let node of row.querySelectorAll('toolbarbutton.show-on-hover')) {
-					node.style.removeProperty('visibility');
-					node.style.removeProperty('display');
+			// Ensure no button is forced to stay visible once the menu is closed
+			this.addEventListener('popuphidden', (event) => {
+				for (let node of this.querySelectorAll('.show-without-hover')) {
+					node.classList.remove('show-without-hover');
+					node.classList.add("show-on-hover");
+				}
+				// Some toolbarbuttons get stuck with open=true if popup is
+				// opened via keyboard (e.g. select version btn in merge mode)
+				let popupParent = event.target.parentElement;
+				if (popupParent?.getAttribute("open") == "true") {
+					popupParent.removeAttribute("open");
 				}
 			});
 
@@ -620,10 +626,14 @@
 								.replace(/\?/g, '%3f')
 								.replace(/%/g, '%25')
 								.replace(/"/g, '%22');
-						openLinkButton = this.createOpenLinkIcon(doi);
+						openLinkButton = this.createOpenLinkIcon(doi, fieldName);
 						link = doi;
 						addLinkContextMenu = true;
 					}
+				}
+				// Hidden open-link button just for focus management
+				else if (['url', 'homepage', 'DOI'].includes(fieldName)) {
+					openLinkButton = this.createOpenLinkIcon(null, fieldName);
 				}
 				let rowData = document.createElement('div');
 				rowData.className = "meta-data";
@@ -644,7 +654,7 @@
 				}
 				
 				// Add options button for title fields
-				if (this.editable && fieldID && val && (fieldName == 'seriesTitle' || fieldName == 'shortTitle'
+				if (this.editable && fieldID && (fieldName == 'seriesTitle' || fieldName == 'shortTitle'
 				|| Zotero.ItemFields.isFieldOfBase(fieldID, 'title')
 				|| Zotero.ItemFields.isFieldOfBase(fieldID, 'publicationTitle'))) {
 					let optionsButton = document.createXULElement("toolbarbutton");
@@ -667,7 +677,6 @@
 						this.querySelector('popupset').append(menupopup);
 						menupopup.addEventListener('popuphidden', () => {
 							menupopup.remove();
-							optionsButton.style.visibility = '';
 						});
 						this.handlePopupOpening(e, menupopup);
 					};
@@ -675,6 +684,8 @@
 					optionsButton.addEventListener("click", triggerPopup);
 					rowData.appendChild(optionsButton);
 					rowData.oncontextmenu = triggerPopup;
+					// Options button is always created for focus management but if the field is empty, it is hidden
+					if (!val) optionsButton.hidden = true;
 				}
 
 				this.addDynamicRow(rowLabel, rowData);
@@ -887,6 +898,8 @@
 				var menulist = document.createXULElement("menulist", { is: "menulist-item-types" });
 				menulist.id = "item-type-menu";
 				menulist.className = "zotero-clicky keyboard-clickable";
+				// This is to make it easier to identify the itemType menu in _saveFieldFocus
+				menulist.setAttribute("tabindex", 0);
 				menulist.addEventListener('command', (event) => {
 					this.changeTypeTo(event.target.value, menulist);
 				});
@@ -1412,6 +1425,7 @@
 			openLink.className = "zotero-clicky zotero-clicky-open-link show-on-hover no-display";
 			openLink.addEventListener("click", event => ZoteroPane.loadURI(value, event));
 			openLink.setAttribute('data-l10n-id', "item-button-view-online");
+			if (!value) openLink.hidden = true;
 			return openLink;
 		}
 
@@ -1496,7 +1510,7 @@
 			else {
 				valueElement.style.textAlign = 'left';
 			}
-			if (!isLong && !fieldName.includes("creator")) {
+			if (!fieldName.startsWith('creator-')) {
 				// autocomplete for creator names is added in addCreatorRow
 				this.addAutocompleteToElement(valueElement);
 			}
@@ -2093,7 +2107,7 @@
 				}
 				// The creator row is dropped before a non-creator row, meaning it's moved below
 				// all other creators
-				else if (!beforeCreatorField.includes("creator-")) {
+				else if (!beforeCreatorField.startsWith("creator-")) {
 					beforeCreatorIndex = this.item.numCreators();
 				}
 				// Creator row is placed before another creator
@@ -2248,11 +2262,24 @@
 				return;
 			}
 			
-			let refocusField = this.querySelector(`#${CSS.escape(this._selectField)}`);
+			let refocusField = this.querySelector(`#${CSS.escape(this._selectField)}:not([disabled="true"])`);
+			// For creator rows, if a focusable node with desired id does not exist, try to focus 
+			// the same component from the last available creator row
+			if (!refocusField && this._selectField.startsWith("creator-")) {
+				let maybeLastCreatorID = this._selectField.replace(/\d+/g, Math.max(this._creatorCount - 1, 0));
+				refocusField = this.querySelector(`#${CSS.escape(maybeLastCreatorID)}`);
+			}
 			if (!refocusField) {
+				this._clearSavedFieldFocus();
 				return;
 			}
 			refocusField.focus();
+			// If the node did not receive focus (e.g. disabled or hidden), focus the next focusable node
+			if (!(refocusField.contains(document.activeElement) || document.activeElement == refocusField)) {
+				// Note: typically, a node contains itself, so node.contains(node) is true.
+				// Somehow, it is not true for itemType menulist, which explains the seemingly redundant || condition.
+				Services.focus.moveFocus(window, refocusField, Services.focus.MOVEFOCUS_FORWARD, 0);
+			}
 			
 			if (this._selectFieldSelection) {
 				let input = refocusField.querySelector("input, textarea");
@@ -2289,10 +2316,12 @@
 			event.preventDefault();
 			event.stopPropagation();
 			
+			let target = event.target;
 			let isRightClick = event.type == 'contextmenu';
-			if (!isRightClick) {
-				event.target.style.visibility = "visible";
-				event.target.style.display = "revert";
+			// Force button to show regardless of its hover status if applicable
+			if (!isRightClick && target.classList.contains("show-on-hover")) {
+				target.classList.add("show-without-hover");
+				target.classList.remove("show-on-hover");
 			}
 			// On click, we have x/y coordinates so use that
 			// On keyboard click, open it next to the target

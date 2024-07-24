@@ -43,7 +43,7 @@
 		set open(newOpen) {
 			newOpen = !!newOpen;
 			let oldOpen = this.open;
-			if (oldOpen === newOpen || this.empty) return;
+			if (oldOpen === newOpen || this.empty || !this.collapsible) return;
 			this.render();
 			
 			// Force open before getting scrollHeight, so we get the right value
@@ -106,6 +106,19 @@
 			this.setAttribute('summary', val);
 		}
 		
+		get collapsible() {
+			return !this.getAttribute("no-collapse");
+		}
+
+		set collapsible(val) {
+			if (val) {
+				this.removeAttribute('no-collapse');
+			}
+			else {
+				this.setAttribute('no-collapse', val);
+			}
+		}
+		
 		static get observedAttributes() {
 			return ['open', 'empty', 'label', 'summary', 'extra-buttons'];
 		}
@@ -157,6 +170,8 @@
 			let twisty = document.createXULElement('toolbarbutton');
 			twisty.className = 'twisty';
 			twisty.setAttribute("tabindex", "0");
+			twisty.setAttribute("tooltip", "dynamic-tooltip");
+			twisty.setAttribute("data-l10n-attrs", "dynamic-tooltiptext");
 			this._head.append(twisty);
 			
 			this._buildExtraButtons();
@@ -173,6 +188,11 @@
 			if (this.hasAttribute('data-l10n-id') && !this.hasAttribute('data-l10n-args')) {
 				this.setAttribute('data-l10n-args', JSON.stringify({ count: 0 }));
 			}
+			// Fetch the localized value of the current pane which is used to set aria-properties
+			document.l10n.formatValue(`pane-${this.dataset.pane}`)
+				.then((res) => {
+					this._paneName = res;
+				});
 		}
 		
 		_buildContextMenu() {
@@ -346,10 +366,10 @@
 				}
 			}
 			// Space/Enter toggle section open/closed.
-			// ArrowLeft/ArrowRight on actual header will close/open
+			// ArrowLeft/ArrowRight on actual header will close/open (depending on locale direction)
 			if (["ArrowLeft", "ArrowRight", " ", "Enter"].includes(event.key)) {
 				stopEvent();
-				this.open = ([" ", "Enter"].includes(event.key)) ? !this.open : (event.key == "ArrowRight");
+				this.open = ([" ", "Enter"].includes(event.key)) ? !this.open : (event.key == Zotero.arrowNextKey);
 				event.target.focus();
 			}
 			if (["ArrowUp", "ArrowDown"].includes(event.key)) {
@@ -409,8 +429,9 @@
 			this._head.setAttribute("aria-label", this.label);
 			this._title.textContent = this.label;
 			this._summary.textContent = this.summary;
-			this._head.querySelector('.twisty').hidden = this._disableCollapsing;
-			this._head.querySelector('.twisty').setAttribute('data-l10n-id', `section-button-${this.open ? "collapse" : "expand"}`);
+			let twisty = this._head.querySelector('.twisty');
+			twisty.hidden = this._disableCollapsing;
+			document.l10n.setAttributes(twisty, `section-button-${this.open ? "collapse" : "expand"}`, { section: this._paneName || "" });
 		}
 	}
 	customElements.define("collapsible-section", CollapsibleSection);

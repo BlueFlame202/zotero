@@ -73,7 +73,8 @@ var Zotero_Tabs = new function () {
 	this._tabs = [{
 		id: 'zotero-pane',
 		type: 'library',
-		title: ''
+		title: '',
+		data: {}
 	}];
 	this._selectedID = 'zotero-pane';
 	this._prevSelectedID = null;
@@ -93,33 +94,36 @@ var Zotero_Tabs = new function () {
 	};
 
 	this._update = function () {
-		this._tabBarRef.current.setTabs(this._tabs.map((tab) => {
-			let icon = null;
+		// Go through all tabs and try to save their icons to tab.data
+		for (let tab of this._tabs) {
+			// Find the icon for the library tab
 			if (tab.id === 'zotero-pane') {
 				let index = ZoteroPane.collectionsView?.selection?.focused;
 				if (typeof index !== 'undefined' && ZoteroPane.collectionsView.getRow(index)) {
 					let iconName = ZoteroPane.collectionsView.getIconName(index);
-					icon = <CSSIcon name={iconName} className="tab-icon" />;
+					tab.data.icon = iconName;
 				}
 			}
-			else if (tab.data?.itemID) {
+			else if (!tab.data.icon) {
+				// Try to fetch the icon for the reader tab
 				try {
 					let item = Zotero.Items.get(tab.data.itemID);
-					icon = <CSSItemTypeIcon itemType={item.getItemTypeIconName(true)} className="tab-icon" />;
+					tab.data.icon = item.getItemTypeIconName(true);
 				}
 				catch (e) {
 					// item might not yet be loaded, we will get the right icon on the next update
-					// but until then use a default placeholder
-					icon = <CSSItemTypeIcon className="tab-icon" />;
 				}
 			}
+		}
 
+		this._tabBarRef.current.setTabs(this._tabs.map((tab) => {
 			return {
 				id: tab.id,
 				type: tab.type,
 				title: tab.title,
 				selected: tab.id == this._selectedID,
-				icon,
+				isItemType: tab.id !== 'zotero-pane',
+				icon: tab.data?.icon || null
 			};
 		}));
 		// Disable File > Close menuitem if multiple tabs are open
@@ -156,7 +160,7 @@ var Zotero_Tabs = new function () {
 	};
 
 	this.init = function () {
-		ReactDOM.render(
+		ReactDOM.createRoot(document.getElementById('tab-bar-container')).render(
 			<TabBar
 				ref={this._tabBarRef}
 				onTabSelect={this.select.bind(this)}
@@ -164,11 +168,8 @@ var Zotero_Tabs = new function () {
 				onTabClose={this.close.bind(this)}
 				onContextMenu={this._openMenu.bind(this)}
 				refocusReader={this.refocusReader.bind(this)}
-			/>,
-			document.getElementById('tab-bar-container'),
-			() => {
-				this._update();
-			}
+				onLoad={this._update.bind(this)}
+			/>
 		);
 	};
 
@@ -198,6 +199,9 @@ var Zotero_Tabs = new function () {
 			let tab = tabs[i];
 			if (tab.type === 'library') {
 				this.rename('zotero-pane', tab.title);
+				// At first, library tab is added without the icon data. We set it here once we know what it is
+				let libraryTab = this._getTab('zotero-pane');
+				libraryTab.tab.data = tab.data || {};
 			}
 			else if (tab.type === 'reader') {
 				if (Zotero.Items.exists(tab.data.itemID)) {
@@ -452,6 +456,7 @@ var Zotero_Tabs = new function () {
 			selectedTab.lastFocusedElement = document.activeElement;
 		}
 		if (tab.type === 'reader-unloaded') {
+			tab.type = "reader-loading";
 			// Make sure the loading message is displayed first.
 			// Then, open reader and hide the loading message once it has loaded.
 			ZoteroContextPane.showLoadingMessage(true);
@@ -489,24 +494,6 @@ var Zotero_Tabs = new function () {
 				tabNode.focus();
 			}
 		}
-		// Allow React to create a tab node
-		setTimeout(() => {
-			tabNode.scrollIntoView({ behavior: 'smooth' });
-		});
-		// Border is not included when scrolling element node into view, therefore we do it manually.
-		// TODO: `scroll-padding` since Firefox 68 can probably be used instead
-		setTimeout(() => {
-			if (!tabNode) {
-				return;
-			}
-			let tabsContainerNode = document.querySelector('#tab-bar-container .tabs');
-			if (tabNode.offsetLeft + tabNode.offsetWidth - tabsContainerNode.offsetWidth + 1 >= tabsContainerNode.scrollLeft) {
-				document.querySelector('#tab-bar-container .tabs').scrollLeft += 1;
-			}
-			else if (tabNode.offsetLeft - 1 <= tabsContainerNode.scrollLeft) {
-				document.querySelector('#tab-bar-container .tabs').scrollLeft -= 1;
-			}
-		}, 500);
 		tab.timeSelected = Zotero.Date.getUnixTimestamp();
 		// Without `setTimeout` the tab closing that happens in `unloadUnusedTabs` results in
 		// tabs deck selection index bigger than the deck children count. It feels like something
@@ -532,8 +519,10 @@ var Zotero_Tabs = new function () {
 	// Mark a tab as loaded
 	this.markAsLoaded = function (id) {
 		let { tab } = this._getTab(id);
-		if (!tab) return;
+		if (!tab || tab.type == "reader") return;
+		let prevType = tab.type;
 		tab.type = "reader";
+		Zotero.Notifier.trigger("load", "tab", [id], { [id]: Object.assign({}, tab, { prevType }) }, true);
 	};
 
 	this.unloadUnusedTabs = function () {
@@ -583,12 +572,12 @@ var Zotero_Tabs = new function () {
 		setTimeout(() => {
 			reader.focus();
 		});
-	}
+	};
 
 	/**
 	 * Moves focus to a tab in the specified direction.
-	 * @param {String} direction. "first", "last", "left", "right", or "current"
-	 * If document.activeElement is a tab, "left" or "right" direction moves focus from that tab.
+	 * @param {String} direction. "first", "last", "previous", "next", or "current"
+	 * If document.activeElement is a tab, "previous" or "next" direction moves focus from that tab.
 	 * Otherwise, focus is moved in the given direction from the currently selected tab.
 	 */
 	this.moveFocus = function (direction) {
@@ -615,10 +604,10 @@ var Zotero_Tabs = new function () {
 			}
 	
 			switch (direction) {
-				case "left":
+				case "previous":
 					tabIndexToFocus = focusedTabIndex > 0 ? focusedTabIndex - 1 : null;
 					break;
-				case "right":
+				case "next":
 					tabIndexToFocus = focusedTabIndex < this._tabs.length - 1 ? focusedTabIndex + 1 : null;
 					break;
 				default:
@@ -629,14 +618,12 @@ var Zotero_Tabs = new function () {
 		if (tabIndexToFocus !== null) {
 			const nextTab = this._tabs[tabIndexToFocus];
 			// There may be duplicate tabs - in normal tab array and in pinned tabs
-			// So to get the right one, fetch all tabs with a given id and filter out one
-			// that's visible
+			// Go through all candidates and try to focus the visible one
 			let candidates = document.querySelectorAll(`[data-id="${nextTab.id}"]`);
 			for (let node of candidates) {
-				if (node.offsetParent) {
-					node.focus();
-					return;
-				}
+				node.focus();
+				// Visible tab was found and focused
+				if (document.activeElement == node) return;
 			}
 		}
 	};

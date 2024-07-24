@@ -94,15 +94,18 @@ describe("Zotero.Collection", function() {
 
 		it("should restore deleted collection", async function () {
 			var collection1 = await createDataObject('collection');
-			var item1 = await createDataObject('item', { collections: [collection1.id] });
+			var collection2 = await createDataObject('collection');
+			var item1 = await createDataObject('item', { collections: [collection1.id, collection2.id] });
 
 			assert.include(item1.getCollections(), collection1.id);
 
 			collection1.deleted = true;
 			await collection1.saveTx();
 
-			// Deleted collection is gone from item's cache
+			// Trashed collection does not count as one of item's containers
 			assert.notInclude(item1.getCollections(), collection1.id);
+			// But it should still return it if includeTrashed=true is passed
+			assert.include(item1.getCollections(true), collection1.id);
 
 			// Restore deleted collection
 			collection1.deleted = false;
@@ -113,20 +116,25 @@ describe("Zotero.Collection", function() {
 			// Collection is restored from trash
 			assert.notInclude(deleted, collection1.id);
 
-			// Collection is back in item's cache
+			// Item belongs to the restored collection
 			assert.include(item1.getCollections(), collection1.id);
 		});
 
 		it("should permanently delete collections from trash", async function () {
 			var collection1 = await createDataObject('collection');
 			var collection2 = await createDataObject('collection', { parentID: collection1.id });
-			var collection3 = await createDataObject('collection', { parentID: collection2.id });
+			var collection3 = await createDataObject('collection', { parentID: collection2.id, deleted: true });
+			var item = await createDataObject('item', { collections: [collection1.id, collection2.id, collection3.id] });
 			
 			await collection1.eraseTx();
 			
 			assert.equal(await Zotero.Collections.getAsync(collection1.id), false);
 			assert.equal(await Zotero.Collections.getAsync(collection2.id), false);
 			assert.equal(await Zotero.Collections.getAsync(collection3.id), false);
+
+			// Erased collections are fully removed as item's containers
+			assert.equal(item.getCollections().length, 0);
+			assert.equal(item.getCollections(true).length, 0);
 		});
 	})
 	

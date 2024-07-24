@@ -2488,12 +2488,17 @@ Zotero.Item.prototype.numNonHTMLFileAttachments = function () {
 };
 
 
-Zotero.Item.prototype.numPDFAttachments = function () {
+Zotero.Item.prototype.numFileAttachmentsWithContentType = function (contentType) {
 	this._requireData('childItems');
 	return this.getAttachments()
 		.map(itemID => Zotero.Items.get(itemID))
-		.filter(item => item.isFileAttachment() && item.attachmentContentType == 'application/pdf')
+		.filter(item => item.isFileAttachment() && item.attachmentContentType == contentType)
 		.length;
+};
+
+
+Zotero.Item.prototype.numPDFAttachments = function () {
+	return this.numFileAttachmentsWithContentType('application/pdf');
 };
 
 
@@ -3858,6 +3863,52 @@ Zotero.Item.prototype.clearBestAttachmentState = function () {
 }
 
 
+Zotero.Item.prototype._getDefaultTitleForAttachmentContentType = function () {
+	switch (this.attachmentContentType) {
+		case 'application/pdf':
+			return Zotero.getString('fileTypes.pdf');
+		case 'application/epub+zip':
+			return Zotero.getString('fileTypes.ebook');
+		case 'text/html':
+			return Zotero.getString('fileTypes.webpage');
+		default:
+			return null;
+	}
+};
+
+
+Zotero.Item.prototype.setAutoAttachmentTitle = function () {
+	if (!this.isAttachment()) {
+		throw new Error("setAutoAttachmentTitle() can only be called on attachment items");
+	}
+	if (!this.isFileAttachment()) {
+		return;
+	}
+	
+	// If this is the only attachment of its type on the parent item, give it
+	// a default title ("PDF", "Webpage", etc.)
+	let isFirstOfType = this.parentItemID
+		&& this.parentItem.numFileAttachmentsWithContentType(this.attachmentContentType) <= 1;
+	if (isFirstOfType) {
+		let defaultTitle = this._getDefaultTitleForAttachmentContentType();
+		if (defaultTitle !== null) {
+			this.setField('title', defaultTitle);
+			return;
+		}
+	}
+	
+	// If this isn't the only attachment of its type or we don't have a default
+	// title for this type, name it after its filename, minus the extension
+	let filename = this.attachmentFilename;
+	if (filename) {
+		let title = filename.replace(/\.[^.]+$/, '');
+		if (title) {
+			this.setField('title', title);
+		}
+	}
+};
+
+
 ////////////////////////////////////////////////////////
 //
 //
@@ -3896,8 +3947,10 @@ for (let name of ['type', 'authorName', 'text', 'comment', 'color', 'pageLabel',
 			switch (name) {
 				case 'type': {
 					let currentType = this._getLatestField('annotationType');
-					if (currentType && currentType != value) {
-						throw new Error("Cannot change annotation type");
+					if (currentType && currentType != value
+						&& (!['highlight', 'underline'].includes(value)
+							|| !['highlight', 'underline'].includes(currentType))) {
+						throw new Error("Only changes between highlight and underline annotation types are permitted");
 					}
 					if (!['highlight', 'underline', 'note', 'text', 'image', 'ink'].includes(value)) {
 						let e = new Error(`Unknown annotation type '${value}'`);
@@ -4261,11 +4314,21 @@ Zotero.Item.prototype.removeAllTags = function() {
 /**
  * Gets the collections the item is in
  *
+ * @param {Boolean} includeTrashed Include trashed collections
  * @return {Array<Integer>}  An array of collectionIDs for all collections the item belongs to
  */
-Zotero.Item.prototype.getCollections = function () {
+Zotero.Item.prototype.getCollections = function (includeTrashed) {
 	this._requireData('collections');
-	return this._collections.concat();
+	if (includeTrashed) {
+		return this._collections.concat();
+	}
+	return this._collections.filter((id) => {
+		var col = Zotero.Collections.get(id);
+		if (!col) {
+			throw new Error("Collection " + id + " not found for item " + this.libraryKey);
+		}
+		return !col.deleted;
+	});
 };
 
 
@@ -4474,32 +4537,19 @@ Zotero.Item.prototype.getItemTypeIconName = function (skipLinkMode = false) {
 };
 
 
-Zotero.Item.prototype.getTagColors = function () {
-	Zotero.warn("Zotero.Item::getTagColors() is deprecated -- use Zotero.Item::getColoredTags()");
-	return this.getColoredTags().map(x => x.color);
-};
-
-
 /**
- * Return tags and colors
+ * Return tags with assigned colors and tags that contain emojis
  *
  * @return {Object[]} - Array of object with 'tag' and 'color' properties
  */
-Zotero.Item.prototype.getColoredTags = function () {
+Zotero.Item.prototype.getItemsListTags = function () {
 	var tags = this.getTags();
 	if (!tags.length) return [];
-	
-	let colorData = [];
 	let tagColors = Zotero.Tags.getColors(this.libraryID);
-	for (let tag of tags) {
-		let data = tagColors.get(tag.tag);
-		if (data) {
-			colorData.push({tag: tag.tag, ...data});
-		}
-	}
-	return colorData.sort((a, b) => a.position - b.position).map(x => ({ tag: x.tag, color: x.color }));
+	let colorOrEmojiTags = tags.filter(tag => tagColors.get(tag.tag) || Zotero.Utilities.Internal.containsEmoji(tag.tag));
+	colorOrEmojiTags.sort((a, b) => Zotero.Tags.compareTagsOrder(this.libraryID, a.tag, b.tag));
+	return colorOrEmojiTags.map(x => ({ tag: x.tag, color: tagColors.get(x.tag)?.color || null }));
 };
-
 
 /**
  * Compares this item to another

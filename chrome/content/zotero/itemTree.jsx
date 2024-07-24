@@ -31,7 +31,7 @@ const LibraryTree = require('./libraryTree');
 const VirtualizedTable = require('components/virtualized-table');
 const { renderCell, formatColumnName } = VirtualizedTable;
 const Icons = require('components/icons');
-const { getDOMElement, getCSSIcon, getCSSItemTypeIcon } = Icons;
+const { getCSSIcon, getCSSItemTypeIcon } = Icons;
 const { COLUMNS } = require("zotero/itemTreeColumns");
 const { Cc, Ci, Cu, ChromeUtils } = require('chrome');
 const { OS } = ChromeUtils.importESModule("chrome://zotero/content/osfile.mjs");
@@ -50,10 +50,12 @@ var ItemTree = class ItemTree extends LibraryTree {
 		Zotero.debug(`Initializing React ItemTree ${opts.id}`);
 		var ref;
 		opts.domEl = domEl;
-		let elem = (
-			<ItemTree ref={c => ref = c } {...opts} />
-		);
-		await new Promise(resolve => ReactDOM.render(elem, domEl, resolve));
+		await new Promise((resolve) => {
+			ReactDOM.createRoot(domEl).render(<ItemTree ref={(c) => {
+				ref = c;
+				resolve();
+			} } {...opts} />);
+		});
 		
 		Zotero.debug(`React ItemTree ${opts.id} initialized`);
 		return ref;
@@ -910,7 +912,7 @@ var ItemTree = class ItemTree extends LibraryTree {
 		// Handle arrow keys specially on multiple selection, since
 		// otherwise the tree just applies it to the last-selected row
 		if (this.selection.count > 1 && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
-			if (event.key == "ArrowRight") {
+			if (event.key == Zotero.arrowNextKey) {
 				this.expandSelectedRows();
 			}
 			else {
@@ -2792,22 +2794,21 @@ var ItemTree = class ItemTree extends LibraryTree {
 		let retracted = "";
 		let retractedAriaLabel = "";
 		if (Zotero.Retractions.isRetracted(item)) {
-			retracted = getDOMElement('IconCross');
+			retracted = getCSSIcon("IconCross");
 			retracted.classList.add("retracted");
 			retractedAriaLabel = Zotero.getString('retraction.banner');
 		}
 
 		let tagAriaLabel = '';
 		let tagSpans = [];
-		let coloredTags = item.getColoredTags();
+		let coloredTags = item.getItemsListTags();
 		if (coloredTags.length) {
 			let { emoji, colored } = coloredTags.reduce((acc, tag) => {
-				acc[Zotero.Utilities.Internal.isOnlyEmoji(tag.tag) ? 'emoji' : 'colored'].push(tag);
+				acc[Zotero.Utilities.Internal.containsEmoji(tag.tag) ? 'emoji' : 'colored'].push(tag);
 				return acc;
 			}, { emoji: [], colored: [] });
 			
-			tagSpans.push(...emoji.map(x => this._getTagSwatch(x.tag)));
-			
+			// Add colored tags first
 			if (colored.length) {
 				let coloredTagSpans = colored.map(x => this._getTagSwatch(x.tag, x.color));
 				let coloredTagSpanWrapper = document.createElement('span');
@@ -2815,6 +2816,9 @@ var ItemTree = class ItemTree extends LibraryTree {
 				coloredTagSpanWrapper.append(...coloredTagSpans);
 				tagSpans.push(coloredTagSpanWrapper);
 			}
+			
+			// Add emoji tags after
+			tagSpans.push(...emoji.map(x => this._getTagSwatch(x.tag)));
 
 			tagAriaLabel = coloredTags.length == 1 ? Zotero.getString('searchConditions.tag') : Zotero.getString('itemFields.tags');
 			tagAriaLabel += ' ' + coloredTags.map(x => x.tag).join(', ') + '.';
@@ -2912,7 +2916,7 @@ var ItemTree = class ItemTree extends LibraryTree {
 			}
 			//else if (type == 'none') {
 			//	if (item.getField('url') || item.getField('DOI')) {
-			//		icon = getDOMElement('IconLink');
+			//		icon = getCSSIcon('IconLink');
 			//		ariaLabel = Zotero.getString('pane.item.attachments.hasLink');
 			//		icon.classList.add('cell-icon');
 			//	}
@@ -3117,8 +3121,6 @@ var ItemTree = class ItemTree extends LibraryTree {
 				this.tree.invalidateRow(this._rowMap[id]);
 			}
 		}
-		// Update aria-activedescendant on the tree
-		this.forceUpdate();
 		this.duplicateMouseSelection = false;
 		if (shouldDebounce) {
 			this._onSelectionChangeDebounced();
@@ -3862,12 +3864,13 @@ var ItemTree = class ItemTree extends LibraryTree {
 	_getTagSwatch(tag, color) {
 		let span = document.createElement('span');
 		span.className = 'tag-swatch';
-		// If only emoji, display directly
+		let extractedEmojis = Zotero.Tags.extractEmojiForItemsList(tag);
+		// If contains emojis, display directly
 		//
 		// TODO: Check for a maximum number of graphemes, which is hard to do
 		// https://stackoverflow.com/a/54369605
-		if (Zotero.Utilities.Internal.isOnlyEmoji(tag)) {
-			span.textContent = tag;
+		if (extractedEmojis) {
+			span.textContent = extractedEmojis;
 			span.className += ' emoji';
 		}
 		// Otherwise display color

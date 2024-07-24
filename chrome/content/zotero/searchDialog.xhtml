@@ -13,8 +13,7 @@
 	onunload="doUnload();"
 	drawintitlebar-platforms="mac"
 	xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
-	xmlns:html="http://www.w3.org/1999/xhtml"
-	style="padding:2em">
+	xmlns:html="http://www.w3.org/1999/xhtml">
 <dialog
 	id="zotero-search-dialog"
 	buttons="cancel,accept">
@@ -36,7 +35,7 @@
 	
 	<vbox id="zotero-search-box-container" flex="1">
 		<hbox align="center">
-			<label value="&zotero.search.name;"/>
+			<label control="search-name" value="&zotero.search.name;"/>
 			<html:input id="search-name" type="text" width="275" maxlength="80"/>
 		</hbox>
 		<zoterosearch id="search-box" flex="1"/>

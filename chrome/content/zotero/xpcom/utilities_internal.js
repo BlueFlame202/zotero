@@ -396,10 +396,9 @@ Zotero.Utilities.Internal = {
 		return s;
 	},
 	
-	isOnlyEmoji: function (str) {
-		// Remove emoji, Zero Width Joiner, and Variation Selector-16 and see if anything's left
-		const re = /\p{Extended_Pictographic}|\u200D|\uFE0F/gu;
-		return !str.replace(re, '');
+	containsEmoji: function (str) {
+		let re = /\p{Extended_Pictographic}/gu;
+		return !!str.match(re);
 	},
 
 	includesEmoji: function (str) {
@@ -1335,7 +1334,7 @@ Zotero.Utilities.Internal = {
 	 * Run translation on a Document to try to find a PDF URL
 	 *
 	 * @param {doc} Document
-	 * @return {String|false} - PDF URL, or false if none found
+	 * @return {{ title: string, url: string } | false} - PDF attachment title and URL, or false if none found
 	 */
 	getPDFFromDocument: async function (doc) {
 		let translate = new Zotero.Translate.Web();
@@ -1356,7 +1355,7 @@ Zotero.Utilities.Internal = {
 		}
 		for (let attachment of newItems[0].attachments) {
 			if (attachment.mimeType == 'application/pdf') {
-				return attachment.url;
+				return { title: attachment.title, url: attachment.url };
 			}
 		}
 		return false;

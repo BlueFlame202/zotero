@@ -114,10 +114,12 @@
 			
 			this._bibEntryCache = new LRUCache();
 			
-			this.titleField.addEventListener('change', () => this.save());
+			this.titleField.addEventListener('blur', () => this.save());
 			this.titleField.ariaLabel = Zotero.getString('itemFields.title');
 			this.titleField.addEventListener('contextmenu', (event) => {
-				if (!this._item) return;
+				if (!this._item
+					// Attachment title field: Use default editable-text context menu
+					|| this._item.isAttachment()) return;
 				
 				event.preventDefault();
 				let menupopup = ZoteroPane.buildFieldTransformMenu({

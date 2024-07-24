@@ -70,6 +70,7 @@ attachment-preview {
 		position: relative;
 		margin-top: -28px;
 		bottom: 6px;
+		direction: ltr;
 
 		toolbarbutton {
 			padding: 4px;
@@ -87,6 +88,10 @@ attachment-preview {
 			&[disabled="true"] {
 				background-color: rgba(0,0,0,0.2);
 			}
+		}
+		
+		&:-moz-locale-dir(rtl) {
+			transform: scaleX(-1);
 		}
 	}
 

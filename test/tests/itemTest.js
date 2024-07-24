@@ -696,6 +696,46 @@ describe("Zotero.Item", function () {
 	})
 	
 	
+	describe("#getCollections()", function () {
+		it("shouldn't include collections in the trash", async function () {
+			var collection1 = await createDataObject('collection');
+			var collection2 = await createDataObject('collection');
+			var item = await createDataObject('item', { collections: [collection1.id, collection2.id] });
+			
+			assert.sameMembers(item.getCollections(), [collection1.id, collection2.id]);
+			
+			collection1.deleted = true;
+			await collection1.saveTx();
+			
+			assert.sameMembers(item.getCollections(), [collection2.id]);
+			
+			// Simulate a restart
+			await Zotero.Items.get(item.id).reload(null, true);
+			
+			// Make sure the deleted collection is not back in item's cache
+			assert.sameMembers(item.getCollections(), [collection2.id]);
+		});
+		
+		it("should include collections in the trash if includeTrashed=true", async function () {
+			var collection1 = await createDataObject('collection');
+			var collection2 = await createDataObject('collection');
+			var item = await createDataObject('item', { collections: [collection1.id, collection2.id] });
+			
+			assert.sameMembers(item.getCollections(true), [collection1.id, collection2.id]);
+			
+			collection1.deleted = true;
+			await collection1.saveTx();
+			
+			assert.sameMembers(item.getCollections(true), [collection1.id, collection2.id]);
+			
+			// Simulate a restart
+			await Zotero.Items.get(item.id).reload(null, true);
+			
+			assert.sameMembers(item.getCollections(true), [collection1.id, collection2.id]);
+		});
+	});
+	
+	
 	describe("#setCollections()", function () {
 		it("should add a collection with an all-numeric key", async function () {
 			var col = new Zotero.Collection();
@@ -1465,6 +1505,7 @@ describe("Zotero.Item", function () {
 				var a = new Zotero.Item('annotation');
 				a.annotationType = 'highlight';
 				assert.doesNotThrow(() => a.annotationType = 'highlight');
+				assert.doesNotThrow(() => a.annotationType = 'underline');
 				assert.throws(() => a.annotationType = 'note');
 			});
 		});
@@ -1809,6 +1850,49 @@ describe("Zotero.Item", function () {
 			assert.sameDeepMembers(tags, [{ tag: 'a' }, { tag: 'b' }]);
 		})
 	})
+
+	describe("#getItemsListTags", function() {
+		it("should return tags with emojis after colored tags", async function () {
+			var tags = [
+				{
+					tag: "BBB ⭐️⭐️"
+				},
+				{
+					tag: "ZZZ 👲"
+				},
+				{
+					tag: "colored tag two"
+				},
+				{
+					tag: "AAA 😀"
+				},
+				{
+					tag: "colored tag one"
+				},
+				{
+					tag: "not included"
+				}
+			];
+			await Zotero.Tags.setColor(Zotero.Libraries.userLibraryID, "colored tag one", "#990000");
+			await Zotero.Tags.setColor(Zotero.Libraries.userLibraryID, "colored tag two", "#FF6666");
+
+			var item = new Zotero.Item('journalArticle');
+			item.setTags(tags);
+			await item.saveTx();
+
+			var itemListTags = item.getItemsListTags();
+			var expected = [
+				{ tag: "colored tag one", color: "#990000" },
+				{ tag: "colored tag two", color: "#FF6666" },
+				{ tag: "AAA 😀", color: null },
+				{ tag: "BBB ⭐️⭐️", color: null },
+				{ tag: "ZZZ 👲", color: null },
+			];
+			for (let i = 0; i < 5; i++) {
+				assert.deepEqual(itemListTags[i], expected[i]);
+			}
+		});
+	});
 	
 	//
 	// Relations and related items

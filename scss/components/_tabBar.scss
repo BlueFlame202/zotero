@@ -147,6 +147,7 @@
 	padding: 4px 1px;
 	column-gap: 4px;
 	-moz-window-dragging: drag;
+	scroll-padding: 2px; // ensures a tab is scrolled into view without cutoff borders
 
 	.pinned-tabs & {
 		padding: 4px 0;
@@ -206,12 +207,14 @@
 		text-align: start;
 		white-space: nowrap;
 
-		&:dir(ltr) {
-			mask-image: linear-gradient(to left, transparent 0px, var(--fill-primary) 20px);
-		}
+		&.overflowing {
+			&:dir(ltr) {
+				mask-image: linear-gradient(to left, transparent 0px, var(--fill-primary) 20px);
+			}
 
-		&:dir(rtl) {
-			mask-image: linear-gradient(to right, transparent 0px, var(--fill-primary) 20px);
+			&:dir(rtl) {
+				mask-image: linear-gradient(to right, transparent 0px, var(--fill-primary) 20px);
+			}
 		}
 	}
 

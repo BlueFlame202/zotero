@@ -1,11 +1,13 @@
 richlistbox.theme-listbox {
 	background: var(--material-background);
 	border: var(--material-panedivider);
+	// Prevent horizontal scrollbar on Windows
+	overflow-x: hidden;
 
 	richlistitem {
 		--listitem-selectedBackground: var(--tag-gray);
 		--listitem-selectedFocusCurrentBackground: var(--color-accent);
-		--listitem-selectedTextColor: var(--accent-white);
+		--listitem-selectedTextColor: var(--color-accent-text);
 		--listitem-selectedBorder: transparent;
 		--listitem-selectedBottomBorder: transparent;
 		--listitem-selectedCurrentBorder: transparent;
@@ -23,11 +25,14 @@ richlistitem {
 	padding: 0.2em 0.4em;
 }
 
-richlistitem, richlistitem > * {
+richlistitem,
+richlistitem > *,
+richlistitem label {
 	// Prevent word cut-off with double-byte characters
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
+	width: 100%;
 }
 
 richlistcheckbox[selected=true] {
